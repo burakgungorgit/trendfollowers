@@ -1,0 +1,16 @@
+[Unit]
+Description=Trade Signal Bot
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/trendtakipcisi
+ExecStart=/home/ubuntu/trendtakipcisi/venv/bin/python /home/ubuntu/trendtakipcisi/bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/home/ubuntu/trendtakipcisi/log.txt
+StandardError=append:/home/ubuntu/trendtakipcisi/log.txt
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target

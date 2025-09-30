@@ -1,0 +1,177 @@
+{
+    "BTC-USD": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "ETH-USD": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "SOL-USD": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "AVAX-USD": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "TUPRS.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "DOAS.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "THYAO.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "MAVI.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "ASELS.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "KONTR.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "ARDYZ.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "MIATK.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "MPARK.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "EKGYO.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "LOGO.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "SMRTG.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "GWIND.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "YEOTK.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "OYAKC.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "EREGL.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "DESA.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "BIMAS.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "TUKAS.IS": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "GOOGL": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "NVDA": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "META": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "INTC": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "AAPL": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "MSFT": {
+        "in_position": false,
+        "entry_price": null,
+        "take_profit": 40,
+        "last_msg": null
+    },
+    "global_last_msg": null
+}
