@@ -135,7 +135,7 @@ def write_log(msg: str, symbol: str = None, level: str = "INFO", notify: bool = 
     # Telegram'a gönder (notify=True ise)
     if notify:
         try:
-            send_telegram(table_msg)
+            send_telegram(line, state=state, symbol=symbol)
         except Exception as e:
             print(f"[Log->Telegram Hata] {e}")
 
