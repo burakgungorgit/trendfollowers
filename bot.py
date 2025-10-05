@@ -135,7 +135,7 @@ def write_log(msg: str, symbol: str = None, level: str = "INFO", notify: bool = 
     # Telegram'a gönder (notify=True ise)
     if notify:
         try:
-            send_telegram(line, state=state, symbol=symbol)
+            send_telegram(table_msg)
         except Exception as e:
             print(f"[Log->Telegram Hata] {e}")
 
@@ -271,11 +271,17 @@ def mark_sent(state, symbol, text):
     save_state(state)
 
 
-def send_telegram(msg: str):
-    """Telegram’a bildirim gönderir."""
+def send_telegram(msg: str, state=None, symbol=None):
+    """Telegram’a bildirim gönderir (spam kontrolü entegre)."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         write_log("⚠️ Telegram ayarları eksik, mesaj gönderilemedi.")
         return
+
+    # Spam kontrolü aktif
+    if state is not None and symbol is not None:
+        if not should_send(state, symbol, msg):
+            return
+        mark_sent(state, symbol, msg)
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
@@ -284,6 +290,7 @@ def send_telegram(msg: str):
             write_log(f"Telegram gönderim hatası: {r.text}")
     except Exception as e:
         write_log(f"Telegram bağlantı hatası: {e}")
+
 
 
 
