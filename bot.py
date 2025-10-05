@@ -76,7 +76,10 @@ TAKE_PROFIT = 40    # %50 kar alım
 UPGRADED_TP = 100   # Günlük EMA100 > EMA200 kesişim sonrası hedef
 
 STATE_FILE = "state.json"
-LOG_FILE = "log.txt"
+
+# --- Temel dizin ve log ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE = os.path.join(BASE_DIR, "log.txt")
 
 # --- Log Rotasyon Ayarları ---
 MAX_LOG_SIZE = 100 * 1024 * 1024  # 100 MB
@@ -121,23 +124,22 @@ def rotate_logs():
         print(f"Log rotasyon hatası: {e}")
 
 
-def write_log(msg: str, symbol: str = None, level: str = "INFO", notify: bool = False, state=None):
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{now}] [{level}] [{symbol}] {msg}" if symbol else f"[{now}] [{level}] {msg}"
-
-    # Konsola yaz
+def write_log(msg: str, symbol: str = None):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{now}] [{symbol}] {msg}" if symbol else f"[{now}] {msg}"
     print(line)
 
-    # Log dosyasına yaz
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    try:
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception as e:
+        print(f"[ERROR] Log yazılamadı: {e}")
 
-    # Telegram'a gönder (notify=True ise)
-    if notify:
-        try:
-            send_telegram(line, state=state, symbol=symbol)
-        except Exception as e:
-            print(f"[Log->Telegram Hata] {e}")
+    try:
+        send_telegram(line)
+    except Exception as e:
+        print(f"[ERROR] Telegram gönderilemedi: {e}")
 
 
 def load_state():
