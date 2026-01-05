@@ -1,398 +1,226 @@
 #!/usr/bin/env python3
-"""
-Güncel bot.py
-- 4H EMA_SHORT/EMA_LONG kesişimleriyle alım sinyali
-- Günlük EMA100/EMA200 trend filtresi
-- Atomic state kaydı (state.json)
-- Log rotasyonu (log.txt -> log.txt.1 ...)
-- Telegram bildirimleri (tablo formatında)
-- Stop-loss bildirimi (tablo) ve pozisyon kapatma
-- Basit telegram spam koruması (aynı mesajı kısa süre tekrar göndermez)
-
-Kullanım:
-1) .env dosyası oluşturup TELEGRAM_TOKEN ve TELEGRAM_CHAT_ID doldurun
-2) python bot.py ile çalıştırın
-
-Not: Bu sürüm yfinance kullanıyor; ağ/indirme hatalarında retry yapar.
-"""
-
 import os
 import time
 import json
-import math
-import threading
-from datetime import datetime, timezone
+from datetime import datetime
 import pandas as pd
 import yfinance as yf
 import requests
 from dotenv import load_dotenv
 
-# --- Ortam Değişkenleri Yükle ---
+# ================== ENV ==================
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- İzlenecek varlıklar ---
-ASSETS = [
-    # Kripto paralar
-    "BTC-USD",     # Bitcoin
-    "ETH-USD",     # Ethereum
-    "SOL-USD",     # Solana
-    "AVAX-USD",    # Avalanche
-
-    # Borsa İstanbul (Yahoo Finance'da .IS uzantılı)
-    "TUPRS.IS",    # Tüpraş
-    "DOAS.IS",     # Doğuş Otomotiv
-    "THYAO.IS",    # Türk Hava Yolları
-    "MAVI.IS",     # Mavi Giyim
-    "ASELS.IS",    # Aselsan
-    "KONTR.IS",    # Kontrolmatik
-    "ARDYZ.IS",    # Ardyz Yazılım
-    "MIATK.IS",    # Mia Teknoloji
-    "MPARK.IS",    # MLP Sağlık
-    "EKGYO.IS",    # Emlak Konut
-    "LOGO.IS",     # Logo Yazılım
-    "SMRTG.IS",    # Smart Güneş
-    "GWIND.IS",    # Galata Wind
-    "YEOTK.IS",    # Yeo Teknoloji
-    "OYAKC.IS",    # OYAK Çimento
-    "EREGL.IS",    # Ereğli Demir Çelik
-    "DESA.IS",     # Desa Deri
-    "BIMAS.IS",    # Bim
-    "TUKAS.IS",    # Tukaş Gıda
-
-    # ABD Hisseleri
-    "GOOGL",       # Alphabet (Google)
-    "NVDA",        # NVIDIA
-    "META",        # Meta Platforms
-    "INTC",        # Intel
-    "AAPL",        # Apple
-    "MSFT"         # Microsoft
-]
-EMA_SHORT = 100
-EMA_LONG = 200
-STOP_LOSS = 10      # %10 zarar
-TAKE_PROFIT = 40    # %50 kar alım
-UPGRADED_TP = 100   # Günlük EMA100 > EMA200 kesişim sonrası hedef
+# ================== AYARLAR ==================
+EMA_FAST = 50
+EMA_SLOW = 100
+EMA_TRAIL = 200
 
 STATE_FILE = "state.json"
+LOG_FILE = "log.txt"
+SIGNAL_LOG = "signals.csv"
+CHECK_INTERVAL = 60 * 60  # saatlik kontrol (günlük veri)
 
-# --- Temel dizin ve log ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(BASE_DIR, "log.txt")
+ASSETS = [
+    "BTC-USD","ETH-USD","SOL-USD","AVAX-USD",
+    "TUPRS.IS","DOAS.IS","THYAO.IS","MAVI.IS","ASELS.IS",
+    "KONTR.IS","ARDYZ.IS","MIATK.IS","MPARK.IS","EKGYO.IS",
+    "LOGO.IS","SMRTG.IS","GWIND.IS","YEOTK.IS","OYAKC.IS",
+    "EREGL.IS","DESA.IS","BIMAS.IS","TUKAS.IS",
+    "GOOGL","NVDA","META","INTC","AAPL","MSFT"
+]
 
-# --- Log Rotasyon Ayarları ---
-MAX_LOG_SIZE = 100 * 1024 * 1024  # 100 MB
-BACKUP_COUNT = 50  # fazla eski log saklama sayısı
-log_lock = threading.Lock()
-
-# --- Telegram spam kontrol ---
-# Aynı mesajı tekrar yollamamak için state içinde symbol->last_msg ve global->last_msg
-MIN_TELEGRAM_INTERVAL = 60  # aynı mesajı en az 60s aralıkla gönder
-
-# ----------------- Yardımcı Fonksiyonlar -----------------
-
-def safe_download(symbol, interval, period, retries=3, pause=2, auto_adjust=True):
-    """yfinance indirme işlemini retries ile sarar. Boş df veya exception durumunda tekrar dener."""
-    for attempt in range(1, retries + 1):
-        try:
-            df = yf.download(symbol, interval=interval, period=period, progress=False, auto_adjust=auto_adjust)
-            if not df.empty:
-                return df
-        except Exception as e:
-            write_log(f"{symbol} download hatası (attempt {attempt}): {e}")
-        time.sleep(pause)
-    return pd.DataFrame()
-
-
-def rotate_logs():
-    """Log dosyası MAX_LOG_SIZE'ı aşınca döndürme işlemi yapar."""
-    try:
-        if not os.path.exists(LOG_FILE):
-            return
-
-        if os.path.getsize(LOG_FILE) >= MAX_LOG_SIZE:
-            # eski logları kaydır
-            for i in range(BACKUP_COUNT - 1, 0, -1):
-                src = f"{LOG_FILE}.{i}"
-                dst = f"{LOG_FILE}.{i+1}"
-                if os.path.exists(src):
-                    os.replace(src, dst)
-            # Mevcut log.txt -> log.txt.1
-            os.replace(LOG_FILE, f"{LOG_FILE}.1")
-    except Exception as e:
-        print(f"Log rotasyon hatası: {e}")
-
-
-def write_log(msg: str, symbol: str = None):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{now}] [{symbol}] {msg}" if symbol else f"[{now}] {msg}"
+# ================== LOG ==================
+def log(msg, symbol=None):
+    t = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{t}]"
+    if symbol:
+        line += f" [{symbol}]"
+    line += f" {msg}"
     print(line)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
 
-    try:
-        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception as e:
-        print(f"[ERROR] Log yazılamadı: {e}")
+# ================== SIGNAL CSV ==================
+def log_signal(symbol, signal, price):
+    header = not os.path.exists(SIGNAL_LOG)
+    df = pd.DataFrame([{
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol": symbol,
+        "signal": signal,
+        "price": round(price, 4)
+    }])
+    df.to_csv(SIGNAL_LOG, mode="a", index=False, header=header)
 
-    try:
-        send_telegram(line)
-    except Exception as e:
-        print(f"[ERROR] Telegram gönderilemedi: {e}")
-
-
+# ================== STATE ==================
 def load_state():
-    # Varsayılan state şeması
-    default = {symbol: {"in_position": False, "entry_price": None, "take_profit": TAKE_PROFIT, "last_msg": None} for symbol in ASSETS}
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                s = json.load(f)
-            # eksik alanları tamamla
-            for k, v in default.items():
-                if k not in s:
-                    s[k] = v
-                else:
-                    for field in v:
-                        if field not in s[k]:
-                            s[k][field] = v[field]
-            if "global_last_msg" not in s:
-                s["global_last_msg"] = None
-            return s
-        except Exception as e:
-            write_log(f"State yüklenirken hata, varsayılan state oluşturuluyor: {e}", level="ERROR")
-            return default
-    return default
+    base = {}
+    for s in ASSETS:
+        base[s] = {
+            "in_position": False,
+            "entry_price": None,
+            "tp50_sent": False,
+            "tp70_sent": False,
+            "below_ema200_count": 0,
+            "last_checked_date": None
+        }
 
+    if not os.path.exists(STATE_FILE):
+        return base
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        log("⚠️ state.json bozuk veya boş. Sıfırdan oluşturuluyor.")
+        return base
+
+    for s in base:
+        if s not in data:
+            data[s] = base[s]
+        else:
+            for k in base[s]:
+                if k not in data[s]:
+                    data[s][k] = base[s][k]
+
+    return data
 
 def save_state(state):
-    tmp_file = STATE_FILE + ".tmp"
-    try:
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=4, ensure_ascii=False)
-        os.replace(tmp_file, STATE_FILE)
-    except Exception as e:
-        write_log(f"State kaydedilemedi: {e}", level="ERROR")
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=4)
+    os.replace(tmp, STATE_FILE)
 
-
-def get_ema(df, period):
-    return df["Close"].ewm(span=period, adjust=False).mean()
-
-
-# ----------------- Mesaj Formatlama -----------------
-
-def format_signal_log(symbol, price, daily_ema100, daily_ema200, entry_price=None, tp=None):
-    take_profit_pct = tp if tp is not None else TAKE_PROFIT
-    stop_loss_price = (entry_price if entry_price else price) * (1 - STOP_LOSS / 100)
-    potential_profit_price = (entry_price if entry_price else price) * (1 + take_profit_pct / 100)
-
-    rel_ema100 = "ÜSTÜNDE ✅" if price > daily_ema100 else "ALTINDA ❌"
-    rel_ema200 = "ÜSTÜNDE ✅" if price > daily_ema200 else "ALTINDA ❌"
-    ema_relation = "EMA100 > EMA200 (YUKARIDA ✅)" if daily_ema100 > daily_ema200 else "EMA100 < EMA200 (AŞAĞIDA ❌)"
-
-    upgraded_info = f"Günlük EMA100, EMA200'ü ÜSTÜNDE ✅ | Yeni TP %{UPGRADED_TP}" if daily_ema100 > daily_ema200 else "Günlük EMA100 henüz EMA200'ü yukarı kesmedi ❌"
-
-    # Kar potansiyeli yüzdesi (entry bazlı)
-    base = entry_price if entry_price else price
-    profit_pct = take_profit_pct
-
-    table = (
-        f"\n📊 {symbol} ALIM SİNYALİ\n"
-        f"4H EMA{EMA_SHORT} & EMA{EMA_LONG} Kesişimi Yukarı!\n\n"
-        f"+-------------------+----------------+----------------------+\n"
-        f"|   Gösterge        |   Değer        |   Durum              |\n"
-        f"+-------------------+----------------+----------------------+\n"
-        f"| Günlük EMA100     | {daily_ema100:,.2f} | Fiyat {rel_ema100:<12} |\n"
-        f"| Günlük EMA200     | {daily_ema200:,.2f} | Fiyat {rel_ema200:<12} |\n"
-        f"| Alış Fiyatı       | {price:,.2f}   |                    |\n"
-        f"| Stop-Loss Seviyesi| {stop_loss_price:,.2f} | -%{STOP_LOSS:<15} |\n"
-        f"| Take-Profit Hedef | {potential_profit_price:,.2f} | +%{profit_pct:<14} |\n"
-        f"+-------------------+----------------+----------------------+\n"
-        f"Trend Durumu: {ema_relation}\n"
-        f"{upgraded_info}\n"
-    )
-    return table
-
-
-def format_stoploss_log(symbol, price, entry, daily_ema100, daily_ema200):
-    rel_ema100 = "ÜSTÜNDE ✅" if price > daily_ema100 else "ALTINDA ❌"
-    rel_ema200 = "ÜSTÜNDE ✅" if price > daily_ema200 else "ALTINDA ❌"
-    ema_relation = "EMA100 > EMA200 (YUKARIDA ✅)" if daily_ema100 > daily_ema200 else "EMA100 < EMA200 (AŞAĞIDA ❌)"
-
-    stop_loss_price = entry * (1 - STOP_LOSS / 100)
-    loss_pct = ((price - entry) / entry) * 100
-
-    table = (
-        f"\n⚠️ {symbol} STOP-LOSS TETİKLENDİ!\n\n"
-        f"+-------------------+----------------+----------------------+\n"
-        f"|   Gösterge        |   Değer        |   Durum              |\n"
-        f"+-------------------+----------------+----------------------+\n"
-        f"| Giriş Fiyatı      | {entry:,.2f}   |                      |\n"
-        f"| Güncel Fiyat      | {price:,.2f}   |                      |\n"
-        f"| Stop-Loss Seviyesi| {stop_loss_price:,.2f} | -%{STOP_LOSS:<15} |\n"
-        f"| Günlük EMA100     | {daily_ema100:,.2f} | Fiyat {rel_ema100:<12} |\n"
-        f"| Günlük EMA200     | {daily_ema200:,.2f} | Fiyat {rel_ema200:<12} |\n"
-        f"+-------------------+----------------+----------------------+\n"
-        f"Trend Durumu: {ema_relation}\n"
-        f"Gerçekleşen Kayıp: %{loss_pct:.2f}\n"
-    )
-    return table
-
-
-# ----------------- Telegram -----------------
-
-def should_send(state, symbol, text):
-    """Basit spam kontrolü: aynı mesajı kısa sürede yeniden gönderme.
-    state içinde symbol->last_msg (metin) ve global_last_msg timestamp tutulur.
-    """
-    now_ts = int(time.time())
-    symbol_last = state.get(symbol, {}).get("last_msg")
-    global_last = state.get("global_last_msg")
-
-    # Eğer tam olarak aynı mesaj son gönderilenle aynıysa  MIN_TELEGRAM_INTERVAL içinde engelle
-    if symbol_last and isinstance(symbol_last, dict):
-        if symbol_last.get("text") == text and now_ts - symbol_last.get("ts", 0) < MIN_TELEGRAM_INTERVAL:
-            return False
-
-    if global_last and isinstance(global_last, dict):
-        if global_last.get("text") == text and now_ts - global_last.get("ts", 0) < 10:
-            # global için daha kısa bekletme (aynı mesajın başka symbol'den gelmesi durumunda)
-            return False
-
-    # Gönderilebilir
-    return True
-
-
-def mark_sent(state, symbol, text):
-    now_ts = int(time.time())
-    if symbol not in state:
-        state[symbol] = {}
-    state[symbol]["last_msg"] = {"text": text, "ts": now_ts}
-    state["global_last_msg"] = {"text": text, "ts": now_ts}
-    save_state(state)
-
-
-def send_telegram(msg: str, state=None, symbol=None):
-    """Telegram’a bildirim gönderir (spam kontrolü entegre)."""
+# ================== TELEGRAM ==================
+def send_telegram(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        write_log("⚠️ Telegram ayarları eksik, mesaj gönderilemedi.")
         return
-
-    # Spam kontrolü aktif
-    if state is not None and symbol is not None:
-        if not should_send(state, symbol, msg):
-            return
-        mark_sent(state, symbol, msg)
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
-        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-        if r.status_code != 200:
-            write_log(f"Telegram gönderim hatası: {r.text}")
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(
+            url,
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+            timeout=10
+        )
     except Exception as e:
-        write_log(f"Telegram bağlantı hatası: {e}")
+        log(f"Telegram hata: {e}")
 
+# ================== DATA ==================
+def get_data(symbol):
+    df = yf.download(
+        symbol,
+        interval="1d",
+        period="800d",  # istersen "max" da olabilir
+        auto_adjust=True,
+        progress=False
+    )
+    if df.empty or len(df) < 210:
+        return None
 
+    # MultiIndex kontrolü
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
 
+    df["EMA50"] = df["Close"].ewm(span=EMA_FAST, adjust=False).mean()
+    df["EMA100"] = df["Close"].ewm(span=EMA_SLOW, adjust=False).mean()
+    df["EMA200"] = df["Close"].ewm(span=EMA_TRAIL, adjust=False).mean()
+    return df
 
-# ----------------- Sinyal Kontrolü -----------------
-
-def check_signals():
+# ================== STRATEJİ ==================
+def check():
     state = load_state()
 
-    for symbol in ASSETS:
+    for s in ASSETS:
         try:
-            # 4H veriler
-            df_4h = safe_download(symbol, interval="4h", period="720d", retries=3)
-            if df_4h.empty or len(df_4h) < max(EMA_LONG, EMA_SHORT) + 2:
-                write_log(f"{symbol} için yeterli 4h veri yok veya indirme başarısız.", symbol=symbol)
+            df = get_data(s)
+            if df is None:
                 continue
 
-            df_4h["EMA_SHORT"] = get_ema(df_4h, EMA_SHORT)
-            df_4h["EMA_LONG"] = get_ema(df_4h, EMA_LONG)
+            prev = df.iloc[-3]
+            cross = df.iloc[-2]
+            last = df.iloc[-1]
 
-            last = df_4h.iloc[[-1]]
-            prev = df_4h.iloc[[-2]]
+            # 🔒 HER ŞEY FLOAT
+            prev_ema50 = float(prev["EMA50"])
+            prev_ema100 = float(prev["EMA100"])
+            cross_ema50 = float(cross["EMA50"])
+            cross_ema100 = float(cross["EMA100"])
+            last_ema50 = float(last["EMA50"])
+            last_ema100 = float(last["EMA100"])
 
-            price = last["Close"].iloc[0].item()
+            price = float(last["Close"])
+            ema200 = float(last["EMA200"])
+            candle_date = str(last.name.date())
 
-            # Günlük veriler
-            df_1d = safe_download(symbol, interval="1d", period="600d", retries=3)
-            if df_1d.empty or len(df_1d) < 201:
-                write_log(f"{symbol} için yeterli 1d veri yok veya indirme başarısız.", symbol=symbol)
-                continue
+            # ========== ALIM ==========
+            if not state[s]["in_position"]:
+                if (
+                    prev_ema50 < prev_ema100 and
+                    cross_ema50 > cross_ema100 and
+                    last_ema50 > last_ema100
+                ):
+                    state[s].update({
+                        "in_position": True,
+                        "entry_price": price,
+                        "tp50_sent": False,
+                        "tp70_sent": False,
+                        "below_ema200_count": 0,
+                        "last_checked_date": candle_date
+                    })
+                    msg = f"📈 {s} ALIM SİNYALİ\nFiyat: {price:.2f}"
+                    send_telegram(msg)
+                    log("ALIM SİNYALİ", s)
+                    log_signal(s, "BUY", price)
 
-            df_1d["EMA100"] = get_ema(df_1d, 100)
-            df_1d["EMA200"] = get_ema(df_1d, 200)
-
-            d_last = df_1d.iloc[[-1]]
-            daily_ema100 = d_last["EMA100"].iloc[0]
-            daily_ema200 = d_last["EMA200"].iloc[0]
-
-            # --- Alım Sinyali ---
-            if not state[symbol]["in_position"]:
-                # 4H EMA kesişimi yukarı
-                if prev["EMA_SHORT"].iloc[0] < prev["EMA_LONG"].iloc[0] and last["EMA_SHORT"].iloc[0] > last["EMA_LONG"].iloc[0]:
-                    state[symbol]["in_position"] = True
-                    state[symbol]["entry_price"] = price
-                    state[symbol]["take_profit"] = TAKE_PROFIT
-
-                    table_msg = format_signal_log(symbol, price, daily_ema100, daily_ema200, entry_price=price, tp=TAKE_PROFIT)
-                    send_telegram(table_msg, state=state, symbol=symbol)
-                    write_log(f"ALIM sinyali: {symbol} | Price: {price:.2f}", symbol=symbol)
-
-            # --- Pozisyon Açıkken ---
+            # ========== POZİSYON ==========
             else:
-                entry = state[symbol]["entry_price"]
-                tp = state[symbol].get("take_profit", TAKE_PROFIT)
+                entry = state[s]["entry_price"]
 
-                # Take Profit
-                if price >= entry * (1 + tp / 100):
-                    msg = f"✅ {symbol} kar al hedefi (%{tp}) gerçekleşti! Fiyat: {price:.2f} | Giriş: {entry:.2f}"
-                    send_telegram(msg, state=state, symbol=symbol)
-                    write_log(msg, symbol=symbol)
-                    state[symbol]["in_position"] = False
-                    state[symbol]["entry_price"] = None
-                    state[symbol]["take_profit"] = TAKE_PROFIT
+                if price >= entry * 1.5 and not state[s]["tp50_sent"]:
+                    send_telegram(f"🔔 {s} +%50 KAR UYARISI\nFiyat: {price:.2f}")
+                    state[s]["tp50_sent"] = True
 
-                # Stop Loss
-                elif price <= entry * (1 - STOP_LOSS / 100):
-                    table_msg = format_stoploss_log(symbol, price, entry, daily_ema100, daily_ema200)
-                    send_telegram(table_msg, state=state, symbol=symbol)
-                    write_log(f"STOP LOSS: {symbol} | Price: {price:.2f} | Entry: {entry:.2f}", symbol=symbol)
-                    state[symbol]["in_position"] = False
-                    state[symbol]["entry_price"] = None
-                    state[symbol]["take_profit"] = TAKE_PROFIT
+                if price >= entry * 1.7 and not state[s]["tp70_sent"]:
+                    send_telegram(f"🔔 {s} +%70 KAR UYARISI\nFiyat: {price:.2f}")
+                    state[s]["tp70_sent"] = True
 
-                else:
-                    # Günlük EMA kesişimiyle TP'yi yükselt
-                    prev_ema100 = df_1d["EMA100"].iloc[-2]
-                    prev_ema200 = df_1d["EMA200"].iloc[-2]
-                    curr_ema100 = daily_ema100
-                    curr_ema200 = daily_ema200
+                if price >= entry * 2.0:
+                    send_telegram(f"✅ {s} +%100 HEDEF\nPOZİSYON KAPATILDI")
+                    log("POZİSYON +%100 KAPATILDI", s)
+                    log_signal(s, "TP100_EXIT", price)
+                    state[s]["in_position"] = False
+                    state[s]["entry_price"] = None
+                    continue
 
-                    if prev_ema100 < prev_ema200 and curr_ema100 > curr_ema200:
-                        if state[symbol].get("take_profit") != UPGRADED_TP:
-                            state[symbol]["take_profit"] = UPGRADED_TP
-                            msg = (f"🔄 {symbol} için GÜNCELLEME!\nGünlük EMA100, EMA200'ü yukarı kesti.\nYeni Take-Profit hedefi: %{UPGRADED_TP}")
-                            send_telegram(msg, state=state, symbol=symbol)
-                            write_log(msg, symbol=symbol)
+                # --- EMA200 GÜNLÜK STOP ---
+                if state[s]["last_checked_date"] != candle_date:
+                    if price < ema200:
+                        state[s]["below_ema200_count"] += 1
+                    else:
+                        state[s]["below_ema200_count"] = 0
+                    state[s]["last_checked_date"] = candle_date
+
+                if state[s]["below_ema200_count"] >= 2:
+                    send_telegram(
+                        f"⛔ {s} STOPLOSS\nEMA200 altında 2 günlük kapanış\nFiyat: {price:.2f}"
+                    )
+                    log("EMA200 STOPLOSS", s)
+                    log_signal(s, "EMA200_STOP", price)
+                    state[s]["in_position"] = False
+                    state[s]["entry_price"] = None
 
         except Exception as e:
-            write_log(f"{symbol} için hata: {e}", symbol=symbol, level="ERROR")
+            log(str(e), s)
 
     save_state(state)
 
-
-# ----------------- Ana Döngü -----------------
+# ================== MAIN ==================
 if __name__ == "__main__":
-    write_log("🚀 Bot başlatıldı")
+    log("🚀 Bot başlatıldı")
     send_telegram("🚀 Bot başlatıldı")
-    # ilk state kaydetme (varsayılanları oluşturmak için)
-    s = load_state()
-    save_state(s)
 
     while True:
-        check_signals()
-        time.sleep(60)  # her dakika kontrol
+        check()
+        time.sleep(CHECK_INTERVAL)
