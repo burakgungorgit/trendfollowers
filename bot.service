@@ -4,12 +4,12 @@ After=network.target
 
 [Service]
 User=ubuntu
-WorkingDirectory=/home/ubuntu/trendtakipcisi
-ExecStart=/home/ubuntu/trendtakipcisi/venv/bin/python /home/ubuntu/trendtakipcisi/bot.py
+WorkingDirectory=/home/ubuntu/trendfollowers
+ExecStart=/home/ubuntu/trendfollowers/venv/bin/python /home/ubuntu/trendfollowers/bot.py
 Restart=always
 RestartSec=30
-StandardOutput=append:/home/ubuntu/trendtakipcisi/log.txt
-StandardError=append:/home/ubuntu/trendtakipcisi/log.txt
+StandardOutput=append:/home/ubuntu/trendfollowers/log.txt
+StandardError=append:/home/ubuntu/trendfollowers/log.txt
 Environment="PYTHONUNBUFFERED=1"
 
 [Install]
