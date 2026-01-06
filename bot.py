@@ -9,7 +9,7 @@ import requests
 from dotenv import load_dotenv
 
 # ================== ENV ==================
-load_dotenv()
+load_dotenv("/home/ubuntu/trendfollowers/.env")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 

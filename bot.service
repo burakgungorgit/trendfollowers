@@ -5,12 +5,12 @@ After=network.target
 [Service]
 User=ubuntu
 WorkingDirectory=/home/ubuntu/trendfollowers
-ExecStart=/home/ubuntu/trendfollowers/venv/bin/python /home/ubuntu/trendfollowers/bot.py
+ExecStart=/home/ubuntu/trendfollowers/venv/bin/python -u /home/ubuntu/trendfollowers/bot.py
 Restart=always
 RestartSec=30
-StandardOutput=append:/home/ubuntu/trendfollowers/log.txt
-StandardError=append:/home/ubuntu/trendfollowers/log.txt
-Environment="PYTHONUNBUFFERED=1"
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
